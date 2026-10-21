@@ -13,6 +13,29 @@ require('neodiff.highlights')
 local sessions = {}
 local config = { sidebar_width = 32, stack_height = 5 }
 
+-- 'linematch' pairs up similar lines inside a changed block, interleaving filler rows
+-- between them. GitHub instead aligns a block's lines from the top and pads the shorter
+-- side at the bottom, so drop it while a NeoDiff tab is current. 'diffopt' is global,
+-- so the user's value is restored on leaving the tab.
+local saved_diffopt
+
+local function use_session_diffopt(active)
+  if active and not saved_diffopt then
+    saved_diffopt = vim.o.diffopt
+    local items = vim.tbl_filter(function(item)
+      return not item:match('^linematch')
+    end, vim.split(saved_diffopt, ',', { trimempty = true }))
+    vim.o.diffopt = table.concat(items, ',')
+  elseif not active and saved_diffopt then
+    vim.o.diffopt = saved_diffopt
+    saved_diffopt = nil
+  end
+end
+
+local function current_session()
+  return sessions[vim.api.nvim_get_current_tabpage()]
+end
+
 function M.setup(opts)
   config = vim.tbl_extend('force', config, opts or {})
 end
@@ -94,6 +117,7 @@ M.open = ui.with_error_notification(function(opts)
   local session = { comparison = comparison, index = 0, timeline = timeline_state }
   session.actions = create_actions(session)
   sessions[vim.api.nvim_get_current_tabpage()] = session
+  use_session_diffopt(true)
   tabline.claim()
 
   layout.create(session)
@@ -114,6 +138,13 @@ vim.api.nvim_create_autocmd('TabClosed', {
       end
     end
     tabline.release(sessions)
+    use_session_diffopt(current_session() ~= nil)
+  end,
+})
+
+vim.api.nvim_create_autocmd('TabEnter', {
+  callback = function()
+    use_session_diffopt(current_session() ~= nil)
   end,
 })
 
@@ -130,6 +161,7 @@ vim.api.nvim_create_autocmd({ 'WinResized', 'VimResized', 'TabEnter' }, {
   callback = function()
     local session = sessions[vim.api.nvim_get_current_tabpage()]
     if session then
+      layout.equalize_diff_panes(session)
       diff.update_header(session)
     end
   end,

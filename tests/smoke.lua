@@ -70,7 +70,14 @@ local ok, err = xpcall(function()
   local start = vim.api.nvim_get_current_tabpage()
   local original_statusline = vim.wo.statusline
   local original_tabline = vim.o.tabline
+  vim.o.diffopt = vim.o.diffopt .. ',linematch:40'
+  local original_diffopt = vim.o.diffopt
   plugin.open({ cwd = root, base = 'main' })
+  assert(not vim.o.diffopt:find('linematch'), 'linematch should be off in the viewer')
+  vim.cmd('tabprevious')
+  assert(vim.o.diffopt == original_diffopt, 'diffopt not restored on leaving the tab')
+  vim.cmd('tabnext')
+  assert(not vim.o.diffopt:find('linematch'), 'linematch should be off on re-entering')
   assert(vim.api.nvim_get_current_tabpage() ~= start, 'viewer did not open')
   assert(plugin.render_tabline():find(' Neodiff ', 1, true))
 
@@ -89,11 +96,33 @@ local ok, err = xpcall(function()
     vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(header_win), 0, 1, false)[1] == ' added.txt'
   )
 
+  local function diff_pane_widths()
+    local widths = {}
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.wo[win].diff then
+        widths[#widths + 1] = vim.api.nvim_win_get_width(win)
+      end
+    end
+    return widths
+  end
+  for _, columns in ipairs({ 0, 121, 150 }) do
+    if columns > 0 then
+      vim.o.columns = columns
+      vim.api.nvim_exec_autocmds('VimResized', {})
+    end
+    local widths = diff_pane_widths()
+    assert(#widths == 2 and math.abs(widths[1] - widths[2]) <= 1, 'diff panes differ in width')
+  end
+
   local diffs = 0
   local positions = {}
   for _, win in ipairs(wins) do
     if vim.wo[win].diff then
       diffs = diffs + 1
+      assert(
+        vim.fn.getwininfo(win)[1].winbar == 1,
+        'diff panes must reserve a winbar row so the header does not cover line 1'
+      )
     end
     positions[#positions + 1] = vim.api.nvim_win_get_position(win)
     assert(not vim.bo[vim.api.nvim_win_get_buf(win)].modifiable)
@@ -138,6 +167,7 @@ local ok, err = xpcall(function()
   assert(not vim.wo.diff, 'diff state leaked to original window')
   assert(vim.wo.statusline == original_statusline, 'statusline leaked to original window')
   assert(vim.o.tabline == original_tabline, 'tabline was not restored')
+  assert(vim.o.diffopt == original_diffopt, 'diffopt was not restored')
 
   plugin.open({ cwd = root, base = target, target = target, mode = 'commits' })
   assert(vim.api.nvim_get_current_line() == ' No changed files')
