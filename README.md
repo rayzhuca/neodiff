@@ -11,10 +11,10 @@ Requires Neovim 0.10+ and Git.
 │ D  legacy.lua       │                    │                    │
 ├─────────────────────┤                    │                    │
 │ Timeline            │                    │                    │
-│ ○ Working tree      │                    │                    │
-│ ● Staging area      │                    │                    │
-│ ○ feature           │                    │                    │
-│ ● main              │                    │                    │
+│ ○ working tree      │                    │                    │
+│ ● staging area      │                    │                    │
+│ ○ ▸ feature         │                    │                    │
+│ ● ▸ main            │                    │                    │
 └─────────────────────┴────────────────────┴────────────────────┘
 ```
 
@@ -69,7 +69,7 @@ Buffers are read-only. Selecting an entry never checks out a branch or stages fi
 
 ## Timeline
 
-The Timeline starts with Working tree and Staging area, followed by local branches.
+The Timeline starts with working tree and staging area, followed by local branches.
 Initially the staging area is the target and the detected default branch is the
 base. Both selected entries have filled circles.
 

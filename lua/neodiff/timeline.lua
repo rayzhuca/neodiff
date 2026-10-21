@@ -10,11 +10,11 @@ end
 
 function M.create(root, options)
   local base = revision_endpoint(root, options.base or git.default_base(root))
-  local target = { kind = 'index', id = 'index', label = 'Staging area' }
+  local target = { kind = 'index', id = 'index', label = 'staging area' }
   if options.target or options.base or options.mode == 'commits' or options.mode == 'branch' then
     target = revision_endpoint(root, options.target or 'HEAD')
   elseif options.mode == 'local' then
-    target = { kind = 'worktree', id = 'worktree', label = 'Working tree' }
+    target = { kind = 'worktree', id = 'worktree', label = 'working tree' }
   end
 
   return {
@@ -29,8 +29,8 @@ end
 
 local function build_rows(state)
   local rows = {
-    { kind = 'worktree', id = 'worktree', label = 'Working tree' },
-    { kind = 'index', id = 'index', label = 'Staging area' },
+    { kind = 'worktree', id = 'worktree', label = 'working tree' },
+    { kind = 'index', id = 'index', label = 'staging area' },
   }
   local branches = vim.deepcopy(state.branches)
   local current = git.current_branch(state.root)
@@ -92,9 +92,9 @@ function M.render(state)
     local is_base = row.id == state.base.id
     local is_target = row.id == state.target.id
     local circle = (is_base or is_target) and '●' or '○'
-    local expansion = row.expandable and (state.expanded[row.id] and ' ▾' or ' ▸') or ''
+    local expansion = row.expandable and (state.expanded[row.id] and '▾ ' or '▸ ') or ''
     local label = row.label:gsub('[\r\n\t]', ' ')
-    lines[index] = (row.indent and '   ' or ' ') .. circle .. ' ' .. label .. expansion
+    lines[index] = (row.indent and '   ' or ' ') .. circle .. ' ' .. expansion .. label
     if previous and previous.id == row.id then
       cursor = index
     end
