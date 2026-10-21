@@ -79,6 +79,8 @@ function M.show_file(session, file)
       or (side == 'right' and right_is_placeholder)
     local filetype = not is_placeholder and vim.filetype.match({ filename = file.path }) or nil
     local buf = ui.create_readonly_buffer(lines, filetype or 'text')
+    -- Lets diff_hunks tell an empty pane from one holding a single blank line.
+    vim.b[buf].neodiff_empty = #lines == 0
 
     vim.api.nvim_win_set_buf(win, buf)
     -- A new buffer does not inherit the window's winbar, so reserve the header row again.
@@ -140,8 +142,14 @@ local function diff_options()
   return options
 end
 
-local function window_lines(win)
-  return vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), 0, -1, false)
+-- A pane's text for vim.diff(). An empty buffer still reads back as one blank line.
+local function window_text(win)
+  local buf = vim.api.nvim_win_get_buf(win)
+  if vim.b[buf].neodiff_empty then
+    return '', 0
+  end
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  return table.concat(lines, '\n') .. '\n', #lines
 end
 
 -- Returns { left = line, right = line } for the first line of each hunk on both sides.
@@ -149,9 +157,9 @@ local function diff_hunks(session)
   if not vim.wo[session.left_win].diff or not vim.wo[session.right_win].diff then
     return {}
   end
-  local left, right = window_lines(session.left_win), window_lines(session.right_win)
-  local indices =
-    vim.diff(table.concat(left, '\n') .. '\n', table.concat(right, '\n') .. '\n', diff_options())
+  local left, left_total = window_text(session.left_win)
+  local right, right_total = window_text(session.right_win)
+  local indices = vim.diff(left, right, diff_options())
 
   local hunks, next_left = {}, nil
   for _, index in ipairs(indices) do
@@ -161,8 +169,8 @@ local function diff_hunks(session)
     local right_first = right_count > 0 and right_start or right_start + 1
     if not next_left or left_first - next_left > hunk_merge_gap then
       hunks[#hunks + 1] = {
-        left = math.max(1, math.min(left_first, #left)),
-        right = math.max(1, math.min(right_first, #right)),
+        left = math.max(1, math.min(left_first, left_total)),
+        right = math.max(1, math.min(right_first, right_total)),
       }
     end
     next_left = left_first + left_count

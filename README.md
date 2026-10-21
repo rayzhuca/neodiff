@@ -80,6 +80,8 @@ base. Both selected entries have filled circles.
   swaps the two sides.
 - Press `o` on a branch to expand or collapse its commits. Commits appear newest
   first, with hashes and subjects, and support the same `Enter` and `b` keys.
+- Double-clicking an entry works like `Enter`, except on a branch that is already
+  the base or target, where it expands or collapses the branch like `o`.
 - Commits load 100 at a time. Moving onto the `load more…` row (or pressing `o`
   or `Enter` on it) fetches the next page, so huge histories stay fast.
 - A branch lists commits not reachable from the default base or from any other
@@ -98,8 +100,9 @@ Timeline state, rendering, and its keymaps live in `lua/neodiff/panels/timeline.
 
 | Key | Action |
 | --- | --- |
-| `j` / `k`, then `Enter` | Select a file in the sidebar |
-| `Enter` in Timeline | Select target, or change base when below it |
+| `j` / `k`, then `Enter` (or double-click) | Select a file in the sidebar |
+| `Enter` or double-click in Timeline | Select target, or change base when below it |
+| Double-click a selected branch in Timeline | Expand / collapse branch commits |
 | `b` in Timeline | Select base |
 | `o` in Timeline | Expand / collapse branch commits |
 | `r` | Refresh the current comparison |

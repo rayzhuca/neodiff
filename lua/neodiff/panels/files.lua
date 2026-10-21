@@ -37,14 +37,12 @@ function M.render(session)
   vim.wo[session.files_win].statusline = ' '
   keymaps.attach(session.files_buf, session)
 
-  vim.keymap.set(
-    'n',
-    '<CR>',
-    ui.with_error_notification(function()
-      session.actions.select_file(vim.api.nvim_win_get_cursor(session.files_win)[1])
-    end),
-    { buffer = session.files_buf, desc = 'View diff' }
-  )
+  local view_diff = ui.with_error_notification(function()
+    session.actions.select_file(vim.api.nvim_win_get_cursor(session.files_win)[1])
+  end)
+  for _, key in ipairs({ '<CR>', '<2-LeftMouse>' }) do
+    vim.keymap.set('n', key, view_diff, { buffer = session.files_buf, desc = 'View diff' })
+  end
 end
 
 function M.mark_selected(session, index)

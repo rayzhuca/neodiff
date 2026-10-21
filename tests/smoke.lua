@@ -25,7 +25,7 @@ local ok, err = xpcall(function()
   local base = run_test_git_command('rev-parse', 'HEAD')
   run_test_git_command('checkout', '-b', 'feature')
   write_fixture_file('changed.lua', { 'local value = 2', 'return value' })
-  write_fixture_file('added.txt', { 'new' })
+  write_fixture_file('added.txt', { 'new', '', 'end' })
   vim.fn.delete(root .. '/deleted.txt')
   run_test_git_command('mv', 'old name.txt', 'new name.txt')
   write_fixture_file('binary.dat', { 'a\nb' }) -- writefile encodes embedded newline as NUL
@@ -48,10 +48,10 @@ local ok, err = xpcall(function()
     local left = api.read_file_at_revision(comparison, file, 'left')
     local right, special = api.read_file_at_revision(comparison, file, 'right')
     if file.status == 'A' then
-      assert(left[1] == '')
+      assert(#left == 0)
     end
     if file.status == 'D' then
-      assert(right[1] == '')
+      assert(#right == 0)
     end
     if file.status == 'R' then
       assert(left[1] == right[1])
@@ -162,6 +162,33 @@ local ok, err = xpcall(function()
       == ' new name.txt'
   )
 
+  -- An added file's blank lines must not pair with the empty side's lone blank line.
+  local files_win = vim.fn.bufwinid(files_buf)
+  vim.api.nvim_set_current_win(files_win)
+  for number, line in ipairs(vim.api.nvim_buf_get_lines(files_buf, 0, -1, false)) do
+    if line:find('added.txt', 1, true) then
+      vim.api.nvim_win_set_cursor(files_win, { number, 0 })
+    end
+  end
+  for _, map in ipairs(vim.api.nvim_buf_get_keymap(files_buf, 'n')) do
+    if map.lhs == '<CR>' then
+      map.callback()
+    end
+  end
+  local checked_added = false
+  for _, win in ipairs(wins) do
+    local first = vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), 0, 1, false)[1]
+    if vim.wo[win].diff and first == 'new' then
+      checked_added = true
+      vim.api.nvim_win_call(win, function()
+        for line = 1, 3 do
+          assert(vim.fn.diff_hlID(line, 1) ~= 0, 'added line ' .. line .. ' is not highlighted')
+        end
+      end)
+    end
+  end
+  assert(checked_added, 'added.txt was not shown')
+
   plugin.close()
   assert(vim.api.nvim_get_current_tabpage() == start)
   assert(not vim.wo.diff, 'diff state leaked to original window')
@@ -220,12 +247,12 @@ local ok, err = xpcall(function()
     api.read_file_at_revision(local_comparison, local_files['changed.lua'], 'right')[1]
       == 'unstaged version'
   )
-  assert(api.read_file_at_revision(local_comparison, local_files['untracked.txt'], 'left')[1] == '')
+  assert(#api.read_file_at_revision(local_comparison, local_files['untracked.txt'], 'left') == 0)
   assert(
     api.read_file_at_revision(local_comparison, local_files['untracked.txt'], 'right')[1]
       == 'untracked addition'
   )
-  assert(api.read_file_at_revision(local_comparison, local_files['added.txt'], 'right')[1] == '')
+  assert(#api.read_file_at_revision(local_comparison, local_files['added.txt'], 'right') == 0)
 
   local revision = function(ref)
     return { kind = 'revision', ref = ref }
@@ -322,7 +349,7 @@ local ok, err = xpcall(function()
   press_timeline_key('staging area', '<CR>')
   press_timeline_key('feature', 'b')
   assert(vim.wo[files_window].winbar:find('(2)', 1, true))
-  press_timeline_key('main', '<CR>')
+  press_timeline_key('main', '<2-LeftMouse>')
   local selection = table.concat(timeline_lines(), '\n')
   assert(selection:find('● staging area', 1, true), 'moving the base must preserve the target')
   assert(selection:find('● ▸ main', 1, true), 'Enter below the base should select a new base')
@@ -343,7 +370,15 @@ local ok, err = xpcall(function()
   press_timeline_key('main', 'b')
   press_timeline_key('feature', '<CR>')
   assert(vim.wo[files_window].winbar:find('(6)', 1, true))
-  press_timeline_key('▸ feature', 'o')
+  press_timeline_key('▸ main', '<2-LeftMouse>')
+  assert(
+    table.concat(timeline_lines(), '\n'):find('● ▾ main', 1, true),
+    'double-clicking the base branch should expand it'
+  )
+  press_timeline_key('▾ main', '<2-LeftMouse>')
+  assert(table.concat(timeline_lines(), '\n'):find('● ▸ main', 1, true))
+  press_timeline_key('▸ feature', '<2-LeftMouse>')
+  assert(vim.wo[files_window].winbar:find('(6)', 1, true), 'expanding must keep the comparison')
   assert(table.concat(timeline_lines(), '\n'):find(target:sub(1, 8), 1, true))
   press_timeline_key(target:sub(1, 8), '<CR>')
   assert(

@@ -195,13 +195,7 @@ function M.attach(state, window, buffer, on_select, on_error)
     M.render(state)
   end
 
-  map('<CR>', 'Select target, or move base to a lower entry', function()
-    select_endpoint('target')
-  end)
-  map('b', 'Use selected entry as base', function()
-    select_endpoint('base')
-  end)
-  map('o', 'Expand or collapse branch commits', function()
+  local function toggle_expansion()
     local row = state.rows[vim.api.nvim_win_get_cursor(window)[1]]
     if row and row.kind == 'more' then
       return load_more(row)
@@ -213,7 +207,23 @@ function M.attach(state, window, buffer, on_select, on_error)
       load_commit_page(state, row)
     end
     M.render(state)
+  end
+
+  map('<CR>', 'Select target, or move base to a lower entry', function()
+    select_endpoint('target')
   end)
+  map('<2-LeftMouse>', 'Select like Enter, or expand an already selected branch', function()
+    local row = state.rows[vim.api.nvim_win_get_cursor(window)[1]]
+    if row and row.expandable and (row.id == state.base.id or row.id == state.target.id) then
+      toggle_expansion()
+    else
+      select_endpoint('target')
+    end
+  end)
+  map('b', 'Use selected entry as base', function()
+    select_endpoint('base')
+  end)
+  map('o', 'Expand or collapse branch commits', toggle_expansion)
   -- Scrolling onto the "load more" row fetches the next page.
   vim.api.nvim_create_autocmd('CursorMoved', {
     buffer = buffer,

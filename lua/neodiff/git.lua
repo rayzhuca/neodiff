@@ -330,8 +330,10 @@ end
 
 function M.read_file_at_revision(comparison, file, side)
   local added = file.status == 'A' or file.status == 'U'
+  -- No lines at all, rather than one blank line, so the diff marks every line on the
+  -- other side as changed instead of pairing a blank line with this one.
   if (side == 'left' and added) or (side == 'right' and file.status == 'D') then
-    return { '' }, false
+    return {}, false
   end
 
   local path = side == 'left' and file.old_path or file.path
