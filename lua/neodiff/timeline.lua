@@ -29,8 +29,8 @@ end
 
 local function build_rows(state)
   local rows = {
-    { kind = 'index', id = 'index', label = 'Staging area' },
     { kind = 'worktree', id = 'worktree', label = 'Working tree' },
+    { kind = 'index', id = 'index', label = 'Staging area' },
   }
   local branches = vim.deepcopy(state.branches)
   local current = git.current_branch(state.root)
@@ -92,11 +92,9 @@ function M.render(state)
     local is_base = row.id == state.base.id
     local is_target = row.id == state.target.id
     local circle = (is_base or is_target) and '●' or '○'
-    local role = is_base and (is_target and ' [base, target]' or ' [base]')
-      or (is_target and ' [target]' or '')
     local expansion = row.expandable and (state.expanded[row.id] and ' ▾' or ' ▸') or ''
     local label = row.label:gsub('[\r\n\t]', ' ')
-    lines[index] = (row.indent and '   ' or ' ') .. circle .. ' ' .. label .. expansion .. role
+    lines[index] = (row.indent and '   ' or ' ') .. circle .. ' ' .. label .. expansion
     if previous and previous.id == row.id then
       cursor = index
     end
@@ -121,7 +119,8 @@ function M.attach(state, window, buffer, on_select, on_error)
   end
 
   local function select_endpoint(role)
-    local row = state.rows[vim.api.nvim_win_get_cursor(window)[1]]
+    local selected_index = vim.api.nvim_win_get_cursor(window)[1]
+    local row = state.rows[selected_index]
     if not row then
       return
     end
@@ -132,10 +131,21 @@ function M.attach(state, window, buffer, on_select, on_error)
       end
       base = row
     else
-      if row.id == base.id then
-        base = target
+      local base_index
+      for index, entry in ipairs(state.rows) do
+        if entry.id == base.id then
+          base_index = index
+          break
+        end
       end
-      target = row
+
+      if row.id == base.id then
+        return
+      elseif base_index and selected_index > base_index then
+        base = row
+      else
+        target = row
+      end
     end
 
     -- Validate and load the comparison before committing the new selection.
@@ -144,7 +154,7 @@ function M.attach(state, window, buffer, on_select, on_error)
     M.render(state)
   end
 
-  map('<CR>', 'Compare selected target against base', function()
+  map('<CR>', 'Select target, or move base to a lower entry', function()
     select_endpoint('target')
   end)
   map('b', 'Use selected entry as base', function()

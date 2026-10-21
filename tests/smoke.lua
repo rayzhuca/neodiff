@@ -274,11 +274,25 @@ local ok, err = xpcall(function()
     end
     error('Missing timeline key: ' .. key)
   end
-  assert(timeline_lines()[1] == ' ● Staging area [target]')
-  assert(timeline_lines()[2] == ' ○ Working tree')
-  assert(table.concat(timeline_lines(), '\n'):find('● main ▸ [base]', 1, true))
+  assert(timeline_lines()[1] == ' ○ Working tree')
+  assert(timeline_lines()[2] == ' ● Staging area')
+  assert(table.concat(timeline_lines(), '\n'):find('● main ▸', 1, true))
   press_timeline_key('feature', 'b')
   assert(vim.wo[files_window].winbar:find('(2)', 1, true))
+  press_timeline_key('main', '<CR>')
+  local selection = table.concat(timeline_lines(), '\n')
+  assert(selection:find('● Staging area', 1, true), 'moving the base must preserve the target')
+  assert(selection:find('● main', 1, true), 'Enter below the base should select a new base')
+  assert(selection:find('○ feature', 1, true), 'previous base should be deselected')
+  assert(not selection:find('[base]', 1, true) and not selection:find('[target]', 1, true))
+  local expected_files = #api.compare_endpoints(root, revision('main'), index).files
+  assert(vim.wo[files_window].winbar:find('(' .. expected_files .. ')', 1, true))
+  press_timeline_key('main', '<CR>')
+  assert(
+    table.concat(timeline_lines(), '\n') == selection,
+    'Enter on base should not swap selections'
+  )
+  press_timeline_key('feature', 'b')
   press_timeline_key('Working tree', '<CR>')
   assert(vim.wo[files_window].winbar:find('(4)', 1, true))
   press_timeline_key('Staging area', 'b')
@@ -289,10 +303,16 @@ local ok, err = xpcall(function()
   press_timeline_key('feature ▸', 'o')
   assert(table.concat(timeline_lines(), '\n'):find(target:sub(1, 8), 1, true))
   press_timeline_key(target:sub(1, 8), '<CR>')
-  assert(table.concat(timeline_lines(), '\n'):find('feature changes [target]', 1, true))
+  assert(
+    table
+      .concat(timeline_lines(), '\n')
+      :find('● ' .. target:sub(1, 8) .. ' feature changes', 1, true)
+  )
   press_timeline_key('feature ▾', 'o')
   assert(
-    table.concat(timeline_lines(), '\n'):find('feature changes [target]', 1, true),
+    table
+      .concat(timeline_lines(), '\n')
+      :find('● ' .. target:sub(1, 8) .. ' feature changes', 1, true),
     'selected commit must stay visible'
   )
   press_timeline_key('branch-b ▸', 'o')

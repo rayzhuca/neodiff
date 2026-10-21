@@ -11,8 +11,8 @@ Requires Neovim 0.10+ and Git.
 │ D  legacy.lua       │                    │                    │
 ├─────────────────────┤                    │                    │
 │ Timeline            │                    │                    │
-│ ● Staging area      │                    │                    │
 │ ○ Working tree      │                    │                    │
+│ ● Staging area      │                    │                    │
 │ ○ feature           │                    │                    │
 │ ● main              │                    │                    │
 └─────────────────────┴────────────────────┴────────────────────┘
@@ -69,12 +69,14 @@ Buffers are read-only. Selecting an entry never checks out a branch or stages fi
 
 ## Timeline
 
-The Timeline starts with Staging area and Working tree, followed by local branches.
+The Timeline starts with Working tree and Staging area, followed by local branches.
 Initially the staging area is the target and the detected default branch is the
-base. Both selected entries have filled circles and base/target labels.
+base. Both selected entries have filled circles.
 
 - Press `Enter` to choose the target and `b` to choose the base. Both sides can be
-  a branch, commit, staging area, or working tree. Choosing the opposite endpoint
+  a branch, commit, staging area, or working tree. Pressing `Enter` below the
+  current base changes the base instead, keeping the target selected. Pressing
+  `Enter` on the base leaves the comparison unchanged. Pressing `b` on the target
   swaps the two sides.
 - Press `o` on a branch to expand or collapse its commits. Commits appear newest
   first, with hashes and subjects, and support the same `Enter` and `b` keys.
@@ -94,7 +96,7 @@ Timeline state, rendering, and its keymaps live in `lua/neodiff/timeline.lua`.
 | Key | Action |
 | --- | --- |
 | `j` / `k`, then `Enter` | Select a file in the sidebar |
-| `Enter` in Timeline | Select target |
+| `Enter` in Timeline | Select target, or change base when below it |
 | `b` in Timeline | Select base |
 | `o` in Timeline | Expand / collapse branch commits |
 | `r` | Refresh the current comparison |
