@@ -10,7 +10,11 @@ local function run_git_command(working_directory, arguments, allow_failure)
     if allow_failure then
       return nil
     end
-    error(vim.trim(result.stderr or 'Git command failed'), 0)
+    local message = vim.trim(result.stderr or '')
+    if message == '' then
+      message = 'git ' .. table.concat(arguments, ' ') .. ' failed'
+    end
+    error(message, 0)
   end
 
   return result.stdout or ''
@@ -99,38 +103,42 @@ function M.list_branches(root)
   return branches
 end
 
-function M.list_branch_commits(root, branch, base, branches)
+-- Returns the revision arguments selecting the commits that belong to a branch.
+function M.branch_commit_range(root, branch, default_base)
   local tip = resolve_commit_hash(root, branch.ref)
-  local boundary, shortest_distance
+  if branch.ref == default_base or 'origin/' .. branch.ref == default_base then
+    return { tip }
+  end
 
-  -- Git has no parent-branch metadata. Use the nearest strictly older branch tip.
-  for _, candidate in ipairs(branches) do
-    if
-      candidate.hash ~= tip
-      and run_git_command(root, { 'merge-base', '--is-ancestor', candidate.hash, tip }, true)
-    then
-      local distance =
-        tonumber(run_git_command(root, { 'rev-list', '--count', candidate.hash .. '..' .. tip }))
-      if not shortest_distance or distance < shortest_distance then
-        boundary, shortest_distance = candidate.hash, distance
-      end
+  -- Git has no parent-branch metadata. Exclude the default base and every other branch
+  -- tip this branch already contains, so stacked branches only list their own commits.
+  local range = { tip, '--not' }
+  local base_hash = run_git_command(
+    root,
+    { 'rev-parse', '--verify', '--end-of-options', default_base .. '^{commit}' },
+    true
+  )
+  if base_hash then
+    range[#range + 1] = vim.trim(base_hash)
+  end
+  local merged = run_git_command(
+    root,
+    { 'for-each-ref', '--merged=' .. tip, '--format=%(objectname)', 'refs/heads/' }
+  )
+  for hash in merged:gmatch('%x+') do
+    if hash ~= tip then
+      range[#range + 1] = hash
     end
   end
+  return range
+end
 
-  if not boundary then
-    local reference = base.kind == 'revision' and base.ref or 'HEAD'
-    local base_hash = resolve_commit_hash(root, reference)
-    boundary = run_git_command(root, { 'merge-base', base_hash, tip }, true)
-    boundary = boundary and vim.trim(boundary)
-  end
-
-  if not boundary or boundary == tip then
-    return {}
-  end
-  local output =
-    run_git_command(root, { 'log', '--format=%H%x09%s', boundary .. '..' .. tip, '--' })
+function M.list_commits(root, range, skip, count)
+  local arguments = { 'log', '--format=%H%x09%s', '--skip=' .. skip, '--max-count=' .. count }
+  vim.list_extend(arguments, range)
+  arguments[#arguments + 1] = '--'
   local commits = {}
-  for line in output:gmatch('[^\n]+') do
+  for line in run_git_command(root, arguments):gmatch('[^\n]+') do
     local hash, subject = line:match('^(%x+)\t(.*)$')
     commits[#commits + 1] = {
       kind = 'revision',
@@ -190,7 +198,7 @@ function M.compare_endpoints(root, base, target)
         local in_revision = other.kind == 'revision'
           and run_git_command(root, { 'cat-file', '-e', other.hash .. ':' .. path }, true)
         if not in_revision then
-          files[#files + 1] = { path = path, old_path = path, status = reverse and 'D' or 'A' }
+          files[#files + 1] = { path = path, old_path = path, status = reverse and 'D' or 'U' }
         end
       end
     end
@@ -258,7 +266,7 @@ function M.build_local_comparison(working_directory)
     '-z',
   })
   for _, path in ipairs(vim.split(untracked, '\0', { plain = true, trimempty = true })) do
-    comparison.files[#comparison.files + 1] = { status = 'A', path = path, old_path = path }
+    comparison.files[#comparison.files + 1] = { status = 'U', path = path, old_path = path }
   end
   table.sort(comparison.files, function(a, b)
     return a.path < b.path
@@ -321,7 +329,8 @@ local function read_working_file(root, path)
 end
 
 function M.read_file_at_revision(comparison, file, side)
-  if (side == 'left' and file.status == 'A') or (side == 'right' and file.status == 'D') then
+  local added = file.status == 'A' or file.status == 'U'
+  if (side == 'left' and added) or (side == 'right' and file.status == 'D') then
     return { '' }, false
   end
 

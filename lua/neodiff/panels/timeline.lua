@@ -1,5 +1,9 @@
+-- The Timeline panel: endpoints to compare, branches, and their commits.
 local M = {}
 local git = require('neodiff.git')
+local ui = require('neodiff.ui')
+local keymaps = require('neodiff.keymaps')
+local commit_page_size = 100
 
 local function revision_endpoint(root, reference)
   if reference == 'HEAD' then
@@ -10,11 +14,9 @@ end
 
 function M.create(root, options)
   local base = revision_endpoint(root, options.base or git.default_base(root))
-  local target = { kind = 'index', id = 'index', label = 'staging area' }
+  local target = { kind = 'worktree', id = 'worktree', label = 'working tree' }
   if options.target or options.base or options.mode == 'commits' or options.mode == 'branch' then
     target = revision_endpoint(root, options.target or 'HEAD')
-  elseif options.mode == 'local' then
-    target = { kind = 'worktree', id = 'worktree', label = 'working tree' }
   end
 
   return {
@@ -22,9 +24,36 @@ function M.create(root, options)
     base = base,
     target = target,
     branches = git.list_branches(root),
+    current_branch = git.current_branch(root),
+    default_base = git.default_base(root),
     expanded = {},
+    commits = {},
     rows = {},
   }
+end
+
+-- Loads the next page of a branch's commits and returns the first newly loaded one.
+local function load_commit_page(state, branch)
+  local entry = state.commits[branch.id]
+  if not entry then
+    entry = {
+      range = git.branch_commit_range(state.root, branch, state.default_base),
+      items = {},
+    }
+    state.commits[branch.id] = entry
+  end
+  local page = git.list_commits(state.root, entry.range, #entry.items, commit_page_size + 1)
+  if #entry.items == 0 and #page == 0 and #entry.range > 1 then
+    -- The branch is fully merged, so show its history rather than nothing.
+    entry.range = { entry.range[1] }
+    page = git.list_commits(state.root, entry.range, 0, commit_page_size + 1)
+  end
+  entry.done = #page <= commit_page_size
+  for index = 1, math.min(#page, commit_page_size) do
+    page[index].indent = true
+    entry.items[#entry.items + 1] = page[index]
+  end
+  return page[1]
 end
 
 local function build_rows(state)
@@ -33,8 +62,8 @@ local function build_rows(state)
     { kind = 'index', id = 'index', label = 'staging area' },
   }
   local branches = vim.deepcopy(state.branches)
-  local current = git.current_branch(state.root)
-  local default = git.default_base(state.root)
+  local current = state.current_branch
+  local default = state.default_base
   table.sort(branches, function(a, b)
     local function rank(branch)
       if branch.ref == default then
@@ -51,18 +80,20 @@ local function build_rows(state)
     return a.ref < b.ref
   end)
 
-  local visible_commits = {}
   for _, branch in ipairs(branches) do
     branch.expandable = true
     rows[#rows + 1] = branch
-    if state.expanded[branch.id] then
-      local commits = git.list_branch_commits(state.root, branch, state.base, state.branches)
-      for _, commit in ipairs(commits) do
-        if not visible_commits[commit.id] then
-          commit.indent = true
-          rows[#rows + 1] = commit
-          visible_commits[commit.id] = true
-        end
+    local entry = state.commits[branch.id]
+    if state.expanded[branch.id] and entry then
+      vim.list_extend(rows, entry.items)
+      if not entry.done then
+        rows[#rows + 1] = {
+          kind = 'more',
+          id = 'more:' .. branch.id,
+          label = 'load more…',
+          indent = true,
+          branch = branch,
+        }
       end
     end
   end
@@ -85,17 +116,19 @@ end
 
 function M.render(state)
   local previous = state.rows[vim.api.nvim_win_get_cursor(state.window)[1]]
+  local cursor_id = state.cursor_id or (previous and previous.id)
+  state.cursor_id = nil
   state.rows = build_rows(state)
   local lines, cursor = {}, 1
 
   for index, row in ipairs(state.rows) do
     local is_base = row.id == state.base.id
     local is_target = row.id == state.target.id
-    local circle = (is_base or is_target) and '●' or '○'
+    local circle = row.kind == 'more' and ' ' or (is_base or is_target) and '●' or '○'
     local expansion = row.expandable and (state.expanded[row.id] and '▾ ' or '▸ ') or ''
     local label = row.label:gsub('[\r\n\t]', ' ')
     lines[index] = (row.indent and '   ' or ' ') .. circle .. ' ' .. expansion .. label
-    if previous and previous.id == row.id then
+    if cursor == 1 and row.id == cursor_id then
       cursor = index
     end
   end
@@ -118,11 +151,19 @@ function M.attach(state, window, buffer, on_select, on_error)
     end, { buffer = buffer, silent = true, desc = description })
   end
 
+  local function load_more(row)
+    local first = load_commit_page(state, row.branch)
+    state.cursor_id = first and first.id
+    M.render(state)
+  end
+
   local function select_endpoint(role)
     local selected_index = vim.api.nvim_win_get_cursor(window)[1]
     local row = state.rows[selected_index]
     if not row then
       return
+    elseif row.kind == 'more' then
+      return load_more(row)
     end
     local base, target = state.base, state.target
     if role == 'base' then
@@ -162,17 +203,56 @@ function M.attach(state, window, buffer, on_select, on_error)
   end)
   map('o', 'Expand or collapse branch commits', function()
     local row = state.rows[vim.api.nvim_win_get_cursor(window)[1]]
-    if not row or not row.expandable then
+    if row and row.kind == 'more' then
+      return load_more(row)
+    elseif not row or not row.expandable then
       return
     end
     state.expanded[row.id] = not state.expanded[row.id]
+    if state.expanded[row.id] and not state.commits[row.id] then
+      load_commit_page(state, row)
+    end
     M.render(state)
   end)
+  -- Scrolling onto the "load more" row fetches the next page.
+  vim.api.nvim_create_autocmd('CursorMoved', {
+    buffer = buffer,
+    callback = function()
+      local row = state.rows[vim.api.nvim_win_get_cursor(window)[1]]
+      if row and row.kind == 'more' then
+        local ok, err = pcall(load_more, row)
+        if not ok then
+          on_error(err)
+        end
+      end
+    end,
+  })
   M.render(state)
+end
+
+function M.mount(session)
+  local buffer = ui.create_readonly_buffer({ '' })
+  vim.api.nvim_win_set_buf(session.stack_win, buffer)
+  ui.configure_panel_window(session.stack_win)
+  ui.set_panel_header(session.stack_win, 'Timeline')
+  vim.wo[session.stack_win].cursorline = true
+  vim.wo[session.stack_win].statusline = ' '
+  keymaps.attach(buffer, session)
+
+  M.attach(session.timeline, session.stack_win, buffer, session.actions.compare, ui.notify_error)
 end
 
 function M.refresh(state)
   state.branches = git.list_branches(state.root)
+  state.current_branch = git.current_branch(state.root)
+  state.default_base = git.default_base(state.root)
+  -- Branch tips may have moved, so reload the first page of each expanded branch.
+  state.commits = {}
+  for _, branch in ipairs(state.branches) do
+    if state.expanded[branch.id] then
+      load_commit_page(state, branch)
+    end
+  end
   M.render(state)
 end
 

@@ -11,8 +11,8 @@ Requires Neovim 0.10+ and Git.
 │ D  legacy.lua       │                    │                    │
 ├─────────────────────┤                    │                    │
 │ Timeline            │                    │                    │
-│ ○ working tree      │                    │                    │
-│ ● staging area      │                    │                    │
+│ ● working tree      │                    │                    │
+│ ○ staging area      │                    │                    │
 │ ○ ▸ feature         │                    │                    │
 │ ● ▸ main            │                    │                    │
 └─────────────────────┴────────────────────┴────────────────────┘
@@ -47,7 +47,7 @@ nvim --cmd 'set runtimepath+=/Users/ray/Desktop/Programs/Lua/neodiff' -c 'NeoDif
 ## Compare
 
 ```vim
-" Default branch versus staging area
+" Default branch versus working tree
 :NeoDiff
 
 " Exact snapshots of main and HEAD
@@ -70,7 +70,7 @@ Buffers are read-only. Selecting an entry never checks out a branch or stages fi
 ## Timeline
 
 The Timeline starts with working tree and staging area, followed by local branches.
-Initially the staging area is the target and the detected default branch is the
+Initially the working tree is the target and the detected default branch is the
 base. Both selected entries have filled circles.
 
 - Press `Enter` to choose the target and `b` to choose the base. Both sides can be
@@ -80,16 +80,19 @@ base. Both selected entries have filled circles.
   swaps the two sides.
 - Press `o` on a branch to expand or collapse its commits. Commits appear newest
   first, with hashes and subjects, and support the same `Enter` and `b` keys.
-- Expansion stops at the nearest older local branch tip that is an ancestor. If
-  none exists, it uses the merge base with the selected base (or HEAD for a local
-  endpoint). Git does not store explicit parent-branch relationships. Selected
+- Commits load 100 at a time. Moving onto the `load more…` row (or pressing `o`
+  or `Enter` on it) fetches the next page, so huge histories stay fast.
+- A branch lists commits not reachable from the default base or from any other
+  local branch tip it contains, so stacked branches show only their own commits.
+  The default base branch, and branches already fully merged, show their full
+  history. Git does not store explicit parent-branch relationships. Selected
   commits stay visible even when their branch is collapsed.
 - The staging area reads the Git index. The working tree reads saved files on
   disk, including untracked files and excluding ignored untracked files. To see
   only unstaged edits, select staging as base and working tree as target. To see
   all local edits, select your current branch as base and working tree as target.
 
-Timeline state, rendering, and its keymaps live in `lua/neodiff/timeline.lua`.
+Timeline state, rendering, and its keymaps live in `lua/neodiff/panels/timeline.lua`.
 
 ## Keys
 
@@ -101,7 +104,7 @@ Timeline state, rendering, and its keymaps live in `lua/neodiff/timeline.lua`.
 | `o` in Timeline | Expand / collapse branch commits |
 | `r` | Refresh the current comparison |
 | `]f` / `[f` | Next / previous file from any panel |
-| `]c` / `[c` | Next / previous diff hunk in either diff pane |
+| `]c` / `[c` | Next / previous diff hunk from any panel, continuing into the next / previous file |
 | `Tab` | Cycle panels |
 | `Ctrl-w` + direction | Standard Neovim window navigation |
 | `q` / `:NeoDiffClose` | Close the viewer tab |

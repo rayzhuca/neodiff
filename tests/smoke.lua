@@ -155,12 +155,8 @@ local ok, err = xpcall(function()
   run_test_git_command('commit', '-m', 'intermediate two')
   run_test_git_command('checkout', 'feature')
 
-  local commits = api.list_branch_commits(
-    root,
-    { ref = 'branch-b' },
-    { kind = 'revision', ref = 'main' },
-    api.list_branches(root)
-  )
+  local commits =
+    api.list_commits(root, api.branch_commit_range(root, { ref = 'branch-b' }, 'main'), 0, 100)
   assert(
     #commits == 2 and commits[2].ref == intermediate,
     'expansion should stop at the nearest parent branch'
@@ -184,7 +180,7 @@ local ok, err = xpcall(function()
   assert(#local_comparison.files == 4)
   assert(not local_files['ignored.txt'])
   assert(local_files['staged.txt'].status == 'A')
-  assert(local_files['untracked.txt'].status == 'A')
+  assert(local_files['untracked.txt'].status == 'U')
   assert(local_files['added.txt'].status == 'D')
   assert(
     api.read_file_at_revision(local_comparison, local_files['changed.lua'], 'left')[1]
@@ -274,9 +270,26 @@ local ok, err = xpcall(function()
     end
     error('Missing timeline key: ' .. key)
   end
-  assert(timeline_lines()[1] == ' ○ working tree')
-  assert(timeline_lines()[2] == ' ● staging area')
+  assert(timeline_lines()[1] == ' ● working tree')
+  assert(timeline_lines()[2] == ' ○ staging area')
   assert(table.concat(timeline_lines(), '\n'):find('● ▸ main', 1, true))
+  local files_buffer = vim.api.nvim_win_get_buf(files_window)
+  local colored_untracked = false
+  for number, line in ipairs(vim.api.nvim_buf_get_lines(files_buffer, 0, -1, false)) do
+    if line:find('untracked.txt', 1, true) then
+      local marks = vim.api.nvim_buf_get_extmarks(
+        files_buffer,
+        -1,
+        { number - 1, 0 },
+        { number - 1, -1 },
+        { details = true }
+      )
+      assert(line:sub(2, 2) == 'U' and marks[1][4].hl_group == 'NeoDiffStatusUntracked')
+      colored_untracked = true
+    end
+  end
+  assert(colored_untracked, 'untracked files should be listed and colored')
+  press_timeline_key('staging area', '<CR>')
   press_timeline_key('feature', 'b')
   assert(vim.wo[files_window].winbar:find('(2)', 1, true))
   press_timeline_key('main', '<CR>')
