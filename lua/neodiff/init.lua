@@ -54,6 +54,17 @@ local function define_diff_highlights()
   }) do
     vim.api.nvim_set_hl(0, 'NeoDiff' .. name, { bg = color, default = true })
   end
+
+  -- Filler rows (the side without the added/deleted line) get a background just
+  -- slightly lighter than Normal so they read as empty space rather than a change.
+  local normal_bg = vim.api.nvim_get_hl(0, { name = 'Normal', link = false }).bg or 0x1e1e1e
+  local filler_bg = 0
+  for shift = 0, 16, 8 do
+    local channel = bit.band(bit.rshift(normal_bg, shift), 0xff)
+    channel = math.min(255, channel + math.floor((255 - channel) * 0.05 + 0.5))
+    filler_bg = filler_bg + bit.lshift(channel, shift)
+  end
+  vim.api.nvim_set_hl(0, 'NeoDiffFiller', { bg = filler_bg, default = true })
 end
 
 define_diff_highlights()
@@ -200,10 +211,12 @@ function M.select_file(session, index)
     vim.wo[win].number = true
     vim.wo[win].relativenumber = false
     vim.wo[win].wrap = false
+    local fillchars = vim.o.fillchars
+    vim.wo[win].fillchars = (fillchars == '' and '' or fillchars .. ',') .. 'diff: '
 
     local tone = side == 'left' and 'Delete' or 'Add'
     vim.wo[win].winhighlight = string.format(
-      'DiffAdd:NeoDiff%s,DiffChange:NeoDiff%s,DiffText:NeoDiff%sText',
+      'DiffAdd:NeoDiff%s,DiffChange:NeoDiff%s,DiffText:NeoDiff%sText,DiffDelete:NeoDiffFiller',
       tone,
       tone,
       tone
