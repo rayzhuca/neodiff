@@ -1,0 +1,9 @@
+# macOS metadata
+.DS_Store
+
+# Vim / Neovim temporary files
+*.swp
+*.swo
+*~
+Session.vim
+Sessionx.vim
