@@ -4,6 +4,7 @@ local M = {}
 local ui = require('neodiff.ui')
 
 function M.attach(buf, session)
+  require('neodiff.scroll').attach(buf, session)
   local actions = session.actions
   local function map(key, fn, desc)
     vim.keymap.set(
@@ -14,6 +15,9 @@ function M.attach(buf, session)
     )
   end
 
+  map('?', function()
+    require('neodiff.help').open(session)
+  end, 'Show NeoDiff shortcuts')
   map('q', actions.close, 'Close NeoDiff')
   map('r', actions.refresh, 'Refresh changes')
   map(']f', function()

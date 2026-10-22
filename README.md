@@ -6,15 +6,15 @@ Requires Neovim 0.10+ and Git.
 ```text
 ┌─────────────────────┬─────────────────────────────────────────┐
 │ Files Changed       │ lua/app.lua                             │
-│ M  lua/app.lua      │ old version        │ new version        │
+│ M  app.lua  lua     │ old version        │ new version        │
 │ A  README.md        │ red changes        │ green changes      │
 │ D  legacy.lua       │                    │                    │
 ├─────────────────────┤                    │                    │
 │ Timeline            │                    │                    │
 │ ● working tree      │                    │                    │
 │ ○ staging area      │                    │                    │
-│ ○ ▸ feature         │                    │                    │
-│ ● ▸ main            │                    │                    │
+│ ● ▸ feature         │                    │                    │
+│ ○ ▸ main            │                    │                    │
 └─────────────────────┴────────────────────┴────────────────────┘
 ```
 
@@ -27,7 +27,7 @@ With lazy.nvim, add this to your plugin specs:
   dir = '/Users/ray/Desktop/Programs/Lua/neodiff',
   name = 'neodiff',
   cmd = { 'NeoDiff', 'NeoDiffClose' },
-  opts = { sidebar_width = 32, stack_height = 5 },
+  opts = { sidebar_width = 32, stack_height = 8 },
 }
 ```
 
@@ -35,7 +35,7 @@ Or add this to `init.lua` without a plugin manager:
 
 ```lua
 vim.opt.runtimepath:append('/Users/ray/Desktop/Programs/Lua/neodiff')
-require('neodiff').setup({ sidebar_width = 32, stack_height = 5 })
+require('neodiff').setup({ sidebar_width = 32, stack_height = 8 })
 ```
 
 To try it without modifying your configuration, run from a Git repository:
@@ -47,7 +47,7 @@ nvim --cmd 'set runtimepath+=/Users/ray/Desktop/Programs/Lua/neodiff' -c 'NeoDif
 ## Compare
 
 ```vim
-" Default branch versus working tree
+" Current branch versus working tree
 :NeoDiff
 
 " Exact snapshots of main and HEAD
@@ -62,16 +62,21 @@ nvim --cmd 'set runtimepath+=/Users/ray/Desktop/Programs/Lua/neodiff' -c 'NeoDif
 ```
 
 The left pane shows the old version and the right pane shows the new version.
-Unchanged lines provide context; native Neovim diff highlighting and synchronized
-scrolling show where they differ. The left pane is the base; the right pane is the
+Unchanged lines provide context; diff highlighting and synchronized
+scrolling show where they differ. The viewer pads each changed block with blank
+display rows so both panes scroll together, even across very large insertions.
+Line numbers still refer to the original files; padding rows have no line number. The left pane is the base; the right pane is the
 target. Comparisons use the exact selected snapshots, including branch tips.
 Buffers are read-only. Selecting an entry never checks out a branch or stages files.
 
 ## Timeline
 
-The Timeline starts with working tree and staging area, followed by local branches.
-Initially the working tree is the target and the detected default branch is the
-base. Both selected entries have filled circles.
+The Timeline starts with working tree and staging area, followed by the current branch stack.
+The stack includes local ancestors and descendants of HEAD plus the detected main
+branch; unrelated branches are hidden. Git ancestry is used because Git does not
+store explicit branch stacks. Explicitly selected revisions remain visible.
+Initially the working tree is the target and the current branch is the base
+(or HEAD when detached). Both selected entries have filled circles.
 
 - Press `Enter` to choose the target and `b` to choose the base. Both sides can be
   a branch, commit, staging area, or working tree. Pressing `Enter` below the
@@ -98,6 +103,9 @@ Timeline state, rendering, and its keymaps live in `lua/neodiff/panels/timeline.
 
 ## Keys
 
+Press `?` from any panel, or click `? for help` in Timeline’s status bar, for a centered
+shortcut guide. Close it with `Esc`, `q`, `?`, or `Enter`. The Timeline defaults to 8 rows; customize `stack_height` in setup.
+
 | Key | Action |
 | --- | --- |
 | `j` / `k`, then `Enter` (or double-click) | Select a file in the sidebar |
@@ -105,12 +113,23 @@ Timeline state, rendering, and its keymaps live in `lua/neodiff/panels/timeline.
 | Double-click a selected branch in Timeline | Expand / collapse branch commits |
 | `b` in Timeline | Select base |
 | `o` in Timeline | Expand / collapse branch commits |
+| `?` | Show shortcut help |
+| `o` in files or a diff pane | Open the project file in a new tab |
+| `gd` in a diff pane | Go to definition using the current project’s language server |
 | `r` | Refresh the current comparison |
 | `]f` / `[f` | Next / previous file from any panel |
 | `]c` / `[c` | Next / previous diff hunk from any panel, continuing into the next / previous file |
 | `Tab` | Cycle panels |
 | `Ctrl-w` + direction | Standard Neovim window navigation |
 | `q` / `:NeoDiffClose` | Close the viewer tab |
+
+`gd` opens the corresponding project file in a new tab and asks its configured
+language server for the definition. The diff tab stays open. Line positions are
+adjusted for insertions and deletions, and renamed files use their current path.
+Lookups use the current project buffer (including unsaved edits), so changed
+historical code may resolve differently. Missing files and deleted lines cannot
+be resolved. A language server with definition support must be configured;
+NeoDiff waits briefly for it to attach when opening a file.
 
 Each invocation opens an independent tab. Press `r` to refresh after saving or committing.
 Renamed files compare their old and new paths. Binary files, submodules, and files
@@ -123,6 +142,8 @@ From this directory:
 
 ```sh
 nvim --headless -u NONE -l tests/smoke.lua
+nvim --headless -u NONE -l tests/navigation.lua
+nvim --headless -u NONE -l tests/scroll.lua
 ```
 
 The tests create a temporary repository, exercise comparisons and viewer windows,

@@ -103,6 +103,27 @@ function M.list_branches(root)
   return branches
 end
 
+-- Git has no explicit stack metadata: keep ancestors and descendants of HEAD,
+-- plus the repository base even when it has advanced independently.
+function M.branch_stack(root)
+  local related = {}
+  for _, relation in ipairs({ '--merged=HEAD', '--contains=HEAD' }) do
+    local output = run_git_command(root, {
+      'for-each-ref',
+      relation,
+      '--format=%(refname:short)',
+      'refs/heads/',
+    })
+    for name in output:gmatch('[^\n]+') do
+      related[name] = true
+    end
+  end
+  local base = M.default_base(root)
+  return vim.tbl_filter(function(branch)
+    return related[branch.ref] or branch.ref == base or 'origin/' .. branch.ref == base
+  end, M.list_branches(root))
+end
+
 -- Returns the revision arguments selecting the commits that belong to a branch.
 function M.branch_commit_range(root, branch, default_base)
   local tip = resolve_commit_hash(root, branch.ref)

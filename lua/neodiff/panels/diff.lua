@@ -3,6 +3,18 @@ local M = {}
 local git = require('neodiff.git')
 local ui = require('neodiff.ui')
 local keymaps = require('neodiff.keymaps')
+local alignment = require('neodiff.alignment')
+
+local function disable_diff(session)
+  for _, side in ipairs({ 'left', 'right' }) do
+    vim.api.nvim_win_call(session[side .. '_win'], function()
+      vim.cmd('diffoff')
+      vim.wo.scrollbind = false
+      vim.wo.cursorbind = false
+      vim.wo.statuscolumn = ''
+    end)
+  end
+end
 
 function M.update_header(session, title)
   if
@@ -51,10 +63,9 @@ end
 
 -- Shows a placeholder in both panes until a file is selected.
 function M.reset(session)
+  session.hunks = {}
+  disable_diff(session)
   for _, side in ipairs({ 'left', 'right' }) do
-    vim.api.nvim_win_call(session[side .. '_win'], function()
-      vim.cmd('diffoff')
-    end)
     local message = 'No changes between these selections.'
     local buf = ui.create_readonly_buffer({ message })
     vim.api.nvim_win_set_buf(session[side .. '_win'], buf)
@@ -72,110 +83,64 @@ function M.show_file(session, file)
   local left, left_is_placeholder = git.read_file_at_revision(session.comparison, file, 'left')
   local right, right_is_placeholder = git.read_file_at_revision(session.comparison, file, 'right')
 
+  -- Unbind both panes before replacing their display buffers.
+  disable_diff(session)
+  local pair = alignment.build(left, right)
+  session.hunks = pair.hunks
+
   for _, side in ipairs({ 'left', 'right' }) do
     local win = session[side .. '_win']
-    local lines = side == 'left' and left or right
+    local data = pair[side]
+    local lines = data.lines
     local is_placeholder = (side == 'left' and left_is_placeholder)
       or (side == 'right' and right_is_placeholder)
     local filetype = not is_placeholder and vim.filetype.match({ filename = file.path }) or nil
     local buf = ui.create_readonly_buffer(lines, filetype or 'text')
-    -- Lets diff_hunks tell an empty pane from one holding a single blank line.
-    vim.b[buf].neodiff_empty = #lines == 0
+    -- Navigation distinguishes an absent source from its display padding.
+    vim.b[buf].neodiff_empty = #data.source == 0
+    alignment.attach(buf, data)
 
     vim.api.nvim_win_set_buf(win, buf)
     -- A new buffer does not inherit the window's winbar, so reserve the header row again.
     ui.set_panel_header(win, '')
     keymaps.attach(buf, session)
-    vim.api.nvim_win_call(win, function()
-      vim.cmd('diffthis')
-    end)
+    require('neodiff.navigation').attach(buf, session.comparison.root, file, side, is_placeholder)
     vim.wo[win].foldenable = false
-    -- On diff lines Neovim draws CursorLine as an underline; highlight only the number.
+    -- Keep the cursor highlight in the gutter so change colors remain visible.
     vim.wo[win].cursorlineopt = 'number'
     vim.wo[win].number = true
+    vim.wo[win].signcolumn = 'no'
+    vim.wo[win].statuscolumn = '%'
+      .. math.max(3, #tostring(math.max(#left, #right)))
+      .. "{v:lua.require'neodiff.alignment'.number()} "
     -- Match the gutters so a longer file on one side does not shift its text over.
     vim.wo[win].numberwidth = math.max(4, #tostring(math.max(#left, #right)) + 1)
     vim.wo[win].relativenumber = false
     vim.wo[win].wrap = false
-    local fillchars = vim.o.fillchars
-    vim.wo[win].fillchars = (fillchars == '' and '' or fillchars .. ',') .. 'diff: '
-
-    local tone = side == 'left' and 'Delete' or 'Add'
-    vim.wo[win].winhighlight = string.format(
-      'DiffAdd:NeoDiff%s,DiffChange:NeoDiff%s,DiffText:NeoDiff%sText,DiffDelete:NeoDiffFiller',
-      tone,
-      tone,
-      tone
-    )
     vim.wo[win].statusline = ' '
     vim.api.nvim_win_set_cursor(win, { 1, 0 })
   end
 
+  -- Reset both views before binding; they now share the same display row numbers.
+  for _, side in ipairs({ 'left', 'right' }) do
+    vim.api.nvim_win_call(session[side .. '_win'], function()
+      vim.fn.winrestview({
+        lnum = 1,
+        col = 0,
+        curswant = 0,
+        topline = 1,
+        topfill = 0,
+        leftcol = 0,
+        skipcol = 0,
+      })
+      vim.wo.scrollbind = true
+    end)
+  end
   M.update_header(session, file.path)
-  vim.cmd('diffupdate')
 end
 
--- Hunks separated by at most this many unchanged lines are one stop for ]c / [c, the
--- way git merges hunks whose context overlaps. Neovim's own highlighting splits a block
--- at every matching line, which leaves stray "end" lines as hunk boundaries.
-local hunk_merge_gap = 2
-
--- vim.diff() options that match how Neovim diffs the panes.
-local function diff_options()
-  local options = { result_type = 'indices' }
-  for item in vim.o.diffopt:gmatch('[^,]+') do
-    local name, value = item:match('^([^:]+):?(.*)$')
-    if name == 'algorithm' then
-      options.algorithm = value
-    elseif name == 'indent-heuristic' then
-      options.indent_heuristic = true
-    elseif name == 'iwhite' then
-      options.ignore_whitespace_change = true
-    elseif name == 'iwhiteall' then
-      options.ignore_whitespace = true
-    elseif name == 'iwhiteeol' then
-      options.ignore_whitespace_change_at_eol = true
-    elseif name == 'iblank' then
-      options.ignore_blank_lines = true
-    end
-  end
-  return options
-end
-
--- A pane's text for vim.diff(). An empty buffer still reads back as one blank line.
-local function window_text(win)
-  local buf = vim.api.nvim_win_get_buf(win)
-  if vim.b[buf].neodiff_empty then
-    return '', 0
-  end
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  return table.concat(lines, '\n') .. '\n', #lines
-end
-
--- Returns { left = line, right = line } for the first line of each hunk on both sides.
 local function diff_hunks(session)
-  if not vim.wo[session.left_win].diff or not vim.wo[session.right_win].diff then
-    return {}
-  end
-  local left, left_total = window_text(session.left_win)
-  local right, right_total = window_text(session.right_win)
-  local indices = vim.diff(left, right, diff_options())
-
-  local hunks, next_left = {}, nil
-  for _, index in ipairs(indices) do
-    local left_start, left_count, right_start, right_count = unpack(index)
-    -- A side with no lines in the hunk shows filler rows below its start line.
-    local left_first = left_count > 0 and left_start or left_start + 1
-    local right_first = right_count > 0 and right_start or right_start + 1
-    if not next_left or left_first - next_left > hunk_merge_gap then
-      hunks[#hunks + 1] = {
-        left = math.max(1, math.min(left_first, left_total)),
-        right = math.max(1, math.min(right_first, right_total)),
-      }
-    end
-    next_left = left_first + left_count
-  end
-  return hunks
+  return session.hunks or {}
 end
 
 local function find_hunk(hunks, side, cursor, direction)
@@ -222,51 +187,6 @@ function M.jump_to_hunk(session, direction)
     local other = side == 'left' and 'right' or 'left'
     vim.api.nvim_win_set_cursor(session[other .. '_win'], { hunk[other], 0 })
     vim.api.nvim_win_set_cursor(session[side .. '_win'], { hunk[side], 0 })
-  end
-end
-
-local function top_of(win)
-  local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
-  return view.topline .. ':' .. (view.topfill or 0)
-end
-
--- A scroll that left the window somewhere other than where sync_scroll last put it.
-local function scrolled_by_user(session, win)
-  return vim.v.event[tostring(win)] ~= nil and session.synced_tops[win] ~= top_of(win)
-end
-
--- Mouse-wheel scrolling an unfocused pane bypasses 'scrollbind', so sync the panes here.
-function M.sync_scroll(session)
-  if session.syncing_scroll then
-    return
-  end
-  session.synced_tops = session.synced_tops or {}
-  local current = vim.api.nvim_get_current_win()
-  -- When the focused pane scrolls, 'scrollbind' already moves the other one. Syncing
-  -- from the other pane as well drags the focused pane back to wherever it lagged during
-  -- fast scrolling. Moves made by an earlier sync are reported here too, alongside the
-  -- next wheel step, so those do not count as the focused pane scrolling.
-  if scrolled_by_user(session, current) then
-    session.synced_tops = {}
-    return
-  end
-  for _, side in ipairs({ 'left', 'right' }) do
-    local win = session[side .. '_win']
-    if
-      win ~= current
-      and vim.api.nvim_win_is_valid(win)
-      and vim.wo[win].scrollbind
-      and scrolled_by_user(session, win)
-    then
-      session.syncing_scroll = true
-      pcall(vim.api.nvim_win_call, win, function()
-        vim.cmd('syncbind')
-      end)
-      session.syncing_scroll = false
-      local other = session[(side == 'left' and 'right' or 'left') .. '_win']
-      session.synced_tops = { [other] = top_of(other) }
-      return
-    end
   end
 end
 

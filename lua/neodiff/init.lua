@@ -11,24 +11,21 @@ local timeline = require('neodiff.panels.timeline')
 require('neodiff.highlights')
 
 local sessions = {}
-local config = { sidebar_width = 32, stack_height = 5 }
+local config = { sidebar_width = 32, stack_height = 8 }
 
--- 'linematch' pairs up similar lines inside a changed block, interleaving filler rows
--- between them. GitHub instead aligns a block's lines from the top and pads the shorter
--- side at the bottom, so drop it while a NeoDiff tab is current. 'diffopt' is global,
--- so the user's value is restored on leaving the tab.
-local saved_diffopt
-
-local function use_session_diffopt(active)
-  if active and not saved_diffopt then
-    saved_diffopt = vim.o.diffopt
-    local items = vim.tbl_filter(function(item)
-      return not item:match('^linematch')
-    end, vim.split(saved_diffopt, ',', { trimempty = true }))
-    vim.o.diffopt = table.concat(items, ',')
-  elseif not active and saved_diffopt then
-    vim.o.diffopt = saved_diffopt
-    saved_diffopt = nil
+-- These global options are scoped to the viewer and restored on leaving it.
+local saved_options
+local function use_session_options(active)
+  if active and not saved_options then
+    saved_options = { laststatus = vim.o.laststatus, scrollopt = vim.o.scrollopt }
+    vim.o.laststatus = 2
+    -- The panes have identical display rows, so native vertical/horizontal
+    -- binding needs no relative offset adjustment when focus changes.
+    vim.o.scrollopt = 'ver,hor'
+  elseif not active and saved_options then
+    vim.o.laststatus = saved_options.laststatus
+    vim.o.scrollopt = saved_options.scrollopt
+    saved_options = nil
   end
 end
 
@@ -38,6 +35,13 @@ end
 
 function M.setup(opts)
   config = vim.tbl_extend('force', config, opts or {})
+end
+
+function M.show_help()
+  local session = current_session()
+  if session then
+    require('neodiff.help').open(session)
+  end
 end
 
 function M.render_tabline()
@@ -117,7 +121,7 @@ M.open = ui.with_error_notification(function(opts)
   local session = { comparison = comparison, index = 0, timeline = timeline_state }
   session.actions = create_actions(session)
   sessions[vim.api.nvim_get_current_tabpage()] = session
-  use_session_diffopt(true)
+  use_session_options(true)
   tabline.claim()
 
   layout.create(session)
@@ -138,22 +142,13 @@ vim.api.nvim_create_autocmd('TabClosed', {
       end
     end
     tabline.release(sessions)
-    use_session_diffopt(current_session() ~= nil)
+    use_session_options(current_session() ~= nil)
   end,
 })
 
 vim.api.nvim_create_autocmd('TabEnter', {
   callback = function()
-    use_session_diffopt(current_session() ~= nil)
-  end,
-})
-
-vim.api.nvim_create_autocmd('WinScrolled', {
-  callback = function()
-    local session = sessions[vim.api.nvim_get_current_tabpage()]
-    if session then
-      diff.sync_scroll(session)
-    end
+    use_session_options(current_session() ~= nil)
   end,
 })
 

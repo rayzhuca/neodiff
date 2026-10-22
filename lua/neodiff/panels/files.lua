@@ -7,14 +7,19 @@ local status_namespace = vim.api.nvim_create_namespace('neodiff_file_status')
 local status_highlights =
   { M = 'NeoDiffStatusModified', D = 'NeoDiffStatusDeleted', U = 'NeoDiffStatusUntracked' }
 
+local function file_label(path)
+  local folder, name = path:match('^(.*)/([^/]+)$')
+  return name and (name .. '  ' .. folder) or path
+end
+
 function M.render(session)
   local comparison = session.comparison
   local names = {}
 
   for _, file in ipairs(comparison.files) do
-    local name = file.path
+    local name = file_label(file.path)
     if file.status == 'R' then
-      name = file.old_path .. ' → ' .. file.path
+      name = file_label(file.path) .. ' ← ' .. file_label(file.old_path)
     end
     names[#names + 1] = ' ' .. file.status .. '  ' .. name:gsub('[\r\n\t]', ' ')
   end
@@ -33,9 +38,20 @@ function M.render(session)
   ui.configure_panel_window(session.files_win)
   vim.wo[session.files_win].cursorline = true
   ui.set_panel_header(session.files_win, 'Files Changed  (' .. #names .. ')')
-  -- A nonempty blank value suppresses the global statusline for this window.
   vim.wo[session.files_win].statusline = ' '
   keymaps.attach(session.files_buf, session)
+
+  vim.keymap.set(
+    'n',
+    'o',
+    ui.with_error_notification(function()
+      local file = comparison.files[vim.api.nvim_win_get_cursor(session.files_win)[1]]
+      if file then
+        require('neodiff.navigation').open_file(comparison.root, file)
+      end
+    end),
+    { buffer = session.files_buf, silent = true, desc = 'Open project file in a new tab' }
+  )
 
   local view_diff = ui.with_error_notification(function()
     session.actions.select_file(vim.api.nvim_win_get_cursor(session.files_win)[1])

@@ -69,20 +69,23 @@ local ok, err = xpcall(function()
   local plugin = require('neodiff')
   local start = vim.api.nvim_get_current_tabpage()
   local original_statusline = vim.wo.statusline
+  local original_laststatus = vim.o.laststatus
+  local original_scrollopt = vim.o.scrollopt
   local original_tabline = vim.o.tabline
   vim.o.diffopt = vim.o.diffopt .. ',linematch:40'
   local original_diffopt = vim.o.diffopt
   plugin.open({ cwd = root, base = 'main' })
-  assert(not vim.o.diffopt:find('linematch'), 'linematch should be off in the viewer')
+  assert(vim.o.diffopt == original_diffopt, 'viewer should preserve diffopt')
   vim.cmd('tabprevious')
   assert(vim.o.diffopt == original_diffopt, 'diffopt not restored on leaving the tab')
+  assert(vim.o.laststatus == original_laststatus, 'laststatus not restored on leaving the tab')
   vim.cmd('tabnext')
-  assert(not vim.o.diffopt:find('linematch'), 'linematch should be off on re-entering')
+  assert(vim.o.diffopt == original_diffopt, 'viewer should preserve diffopt on re-entering')
   assert(vim.api.nvim_get_current_tabpage() ~= start, 'viewer did not open')
   assert(plugin.render_tabline():find(' Neodiff ', 1, true))
 
   local wins = vim.api.nvim_tabpage_list_wins(0)
-  assert(#wins == 5, 'expected four panels and one shared header')
+  assert(#wins == 5, 'expected four panels and shared header')
   local header_win
   wins = vim.tbl_filter(function(win)
     if vim.api.nvim_win_get_config(win).relative ~= '' then
@@ -99,7 +102,7 @@ local ok, err = xpcall(function()
   local function diff_pane_widths()
     local widths = {}
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-      if vim.wo[win].diff then
+      if vim.b[vim.api.nvim_win_get_buf(win)].neodiff_view then
         widths[#widths + 1] = vim.api.nvim_win_get_width(win)
       end
     end
@@ -117,7 +120,7 @@ local ok, err = xpcall(function()
   local diffs = 0
   local positions = {}
   for _, win in ipairs(wins) do
-    if vim.wo[win].diff then
+    if vim.b[vim.api.nvim_win_get_buf(win)].neodiff_view then
       diffs = diffs + 1
       assert(
         vim.fn.getwininfo(win)[1].winbar == 1,
@@ -127,13 +130,14 @@ local ok, err = xpcall(function()
     positions[#positions + 1] = vim.api.nvim_win_get_position(win)
     assert(not vim.bo[vim.api.nvim_win_get_buf(win)].modifiable)
     local status = vim.api.nvim_eval_statusline(vim.wo[win].statusline, { winid = win }).str
-    assert(vim.trim(status) == '', 'panel statuslines should be blank')
+    local expected = vim.wo[win].winbar == ' Timeline' and '? for help' or ''
+    assert(vim.trim(status) == expected, 'only Timeline should show a help hint')
   end
   assert(diffs == 2)
 
   local total_width = 1
   for _, win in ipairs(wins) do
-    if vim.wo[win].diff then
+    if vim.b[vim.api.nvim_win_get_buf(win)].neodiff_view then
       total_width = total_width + vim.api.nvim_win_get_width(win)
       assert(vim.trim(vim.wo[win].winbar) == '')
     end
@@ -148,6 +152,44 @@ local ok, err = xpcall(function()
   assert(positions[3][1] == positions[1][1] and positions[4][1] == positions[1][1])
 
   local files_buf = vim.api.nvim_get_current_buf()
+  local help_origin = vim.api.nvim_get_current_win()
+  for _, dismiss in ipairs({ '<Esc>', 'q', '?', '<CR>' }) do
+    for _, map in ipairs(vim.api.nvim_buf_get_keymap(files_buf, 'n')) do
+      if map.lhs == '?' then
+        map.callback()
+      end
+    end
+    local help_win = vim.api.nvim_get_current_win()
+    local help_buf = vim.api.nvim_get_current_buf()
+    local help_config = vim.api.nvim_win_get_config(help_win)
+    assert(help_config.relative == 'editor' and help_config.zindex > 40)
+    assert(help_config.col == math.floor((vim.o.columns - help_config.width - 2) / 2))
+    local help_text = table.concat(vim.api.nvim_buf_get_lines(help_buf, 0, -1, false), '\n')
+    for _, label in ipairs({
+      'Anywhere',
+      'Files',
+      'Diff panes',
+      'Timeline',
+      'gd',
+      ']f / [f',
+      ']c / [c',
+    }) do
+      assert(help_text:find(label, 1, true), 'missing shortcut help: ' .. label)
+    end
+    assert(not vim.bo[help_buf].modifiable)
+    plugin.show_help()
+    assert(vim.api.nvim_get_current_win() == help_win, 'reuse the open help dialog')
+    for _, map in ipairs(vim.api.nvim_buf_get_keymap(help_buf, 'n')) do
+      if map.lhs == dismiss then
+        map.callback()
+      end
+    end
+    assert(not vim.api.nvim_win_is_valid(help_win))
+    assert(not vim.api.nvim_buf_is_valid(help_buf))
+    assert(vim.api.nvim_get_current_win() == help_origin)
+    assert(#vim.api.nvim_tabpage_list_wins(0) == 5)
+  end
+
   local maps = vim.api.nvim_buf_get_keymap(files_buf, 'n')
   for _, map in ipairs(maps) do
     if map.lhs == ']f' then
@@ -178,11 +220,21 @@ local ok, err = xpcall(function()
   local checked_added = false
   for _, win in ipairs(wins) do
     local first = vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), 0, 1, false)[1]
-    if vim.wo[win].diff and first == 'new' then
+    if vim.b[vim.api.nvim_win_get_buf(win)].neodiff_view and first == 'new' then
       checked_added = true
       vim.api.nvim_win_call(win, function()
         for line = 1, 3 do
-          assert(vim.fn.diff_hlID(line, 1) ~= 0, 'added line ' .. line .. ' is not highlighted')
+          local marks = vim.api.nvim_buf_get_extmarks(
+            0,
+            -1,
+            { line - 1, 0 },
+            { line - 1, -1 },
+            { details = true }
+          )
+          assert(
+            marks[1] and marks[1][4].line_hl_group == 'NeoDiffAdd',
+            'added line is not highlighted'
+          )
         end
       end)
     end
@@ -193,6 +245,8 @@ local ok, err = xpcall(function()
   assert(vim.api.nvim_get_current_tabpage() == start)
   assert(not vim.wo.diff, 'diff state leaked to original window')
   assert(vim.wo.statusline == original_statusline, 'statusline leaked to original window')
+  assert(vim.o.laststatus == original_laststatus, 'laststatus must be restored')
+  assert(vim.o.scrollopt == original_scrollopt, 'scrollopt must be restored')
   assert(vim.o.tabline == original_tabline, 'tabline was not restored')
   assert(vim.o.diffopt == original_diffopt, 'diffopt was not restored')
 
@@ -218,6 +272,25 @@ local ok, err = xpcall(function()
     #commits == 2 and commits[2].ref == intermediate,
     'expansion should stop at the nearest parent branch'
   )
+
+  run_test_git_command('checkout', '-b', 'unrelated', 'main')
+  write_fixture_file('sibling.txt', { 'unrelated branch' })
+  run_test_git_command('add', 'sibling.txt')
+  run_test_git_command('commit', '-m', 'unrelated work')
+  run_test_git_command('checkout', 'feature')
+  local stack = {}
+  for _, branch in ipairs(api.branch_stack(root)) do
+    stack[branch.ref] = true
+  end
+  assert(stack.main and stack.feature and stack['branch-b'])
+  assert(not stack.unrelated, 'unrelated branches must not appear in the stack')
+
+  local timeline = require('neodiff.panels.timeline')
+  assert(timeline.create(root, {}).base.ref == 'feature')
+  assert(timeline.create(root, { base = 'main' }).base.ref == 'main')
+  run_test_git_command('checkout', '--detach')
+  assert(timeline.create(root, {}).base.ref == 'HEAD')
+  run_test_git_command('checkout', 'feature')
 
   write_fixture_file('changed.lua', { 'staged version' })
   run_test_git_command('add', 'changed.lua')
@@ -305,6 +378,7 @@ local ok, err = xpcall(function()
     end
   end
   assert(timeline_window)
+  assert(vim.api.nvim_win_get_height(timeline_window) == 8, 'timeline should default to eight rows')
   local function timeline_lines()
     return vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(timeline_window), 0, -1, false)
   end
@@ -329,7 +403,7 @@ local ok, err = xpcall(function()
   end
   assert(timeline_lines()[1] == ' ● working tree')
   assert(timeline_lines()[2] == ' ○ staging area')
-  assert(table.concat(timeline_lines(), '\n'):find('● ▸ main', 1, true))
+  assert(table.concat(timeline_lines(), '\n'):find('● ▸ feature', 1, true))
   local files_buffer = vim.api.nvim_win_get_buf(files_window)
   local colored_untracked = false
   for number, line in ipairs(vim.api.nvim_buf_get_lines(files_buffer, 0, -1, false)) do
@@ -414,6 +488,45 @@ local ok, err = xpcall(function()
   write_fixture_file('another.txt', { 'saved after opening' })
   press_timeline_key('working tree', 'r')
   assert(vim.wo[files_window].winbar:find('(5)', 1, true))
+  plugin.close()
+
+  -- A long added file must remain scrollable with focus in the sidebar.
+  vim.fn.mkdir(root .. '/nested', 'p')
+  local long_lines = {}
+  for i = 1, 300 do
+    long_lines[i] = 'line ' .. i
+  end
+  write_fixture_file('nested/long.txt', long_lines)
+  plugin.open({ cwd = root })
+  local sidebar = vim.api.nvim_get_current_win()
+  local sidebar_buf = vim.api.nvim_get_current_buf()
+  for number, line in ipairs(vim.api.nvim_buf_get_lines(sidebar_buf, 0, -1, false)) do
+    if line:find('long.txt', 1, true) then
+      assert(line == ' U  long.txt  nested', 'filename should precede folder')
+      vim.api.nvim_win_set_cursor(sidebar, { number, 0 })
+    end
+  end
+  for _, map in ipairs(vim.api.nvim_buf_get_keymap(sidebar_buf, 'n')) do
+    if map.lhs == '<CR>' then
+      map.callback()
+    end
+  end
+  local long_win
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if
+      vim.b[vim.api.nvim_win_get_buf(win)].neodiff_view
+      and vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win)) == 300
+    then
+      long_win = win
+    end
+  end
+  assert(long_win)
+  local short_win
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.b[vim.api.nvim_win_get_buf(win)].neodiff_view and win ~= long_win then
+      short_win = win
+    end
+  end
   plugin.close()
 end, debug.traceback)
 vim.fn.delete(root, 'rf')

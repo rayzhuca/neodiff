@@ -13,7 +13,7 @@ local function revision_endpoint(root, reference)
 end
 
 function M.create(root, options)
-  local base = revision_endpoint(root, options.base or git.default_base(root))
+  local base = revision_endpoint(root, options.base or git.current_branch(root))
   local target = { kind = 'worktree', id = 'worktree', label = 'working tree' }
   if options.target or options.base or options.mode == 'commits' or options.mode == 'branch' then
     target = revision_endpoint(root, options.target or 'HEAD')
@@ -23,7 +23,7 @@ function M.create(root, options)
     root = root,
     base = base,
     target = target,
-    branches = git.list_branches(root),
+    branches = git.branch_stack(root),
     current_branch = git.current_branch(root),
     default_base = git.default_base(root),
     expanded = {},
@@ -246,14 +246,14 @@ function M.mount(session)
   ui.configure_panel_window(session.stack_win)
   ui.set_panel_header(session.stack_win, 'Timeline')
   vim.wo[session.stack_win].cursorline = true
-  vim.wo[session.stack_win].statusline = ' '
+  vim.wo[session.stack_win].statusline = "%@v:lua.require'neodiff'.show_help@ ? for help %T"
   keymaps.attach(buffer, session)
 
   M.attach(session.timeline, session.stack_win, buffer, session.actions.compare, ui.notify_error)
 end
 
 function M.refresh(state)
-  state.branches = git.list_branches(state.root)
+  state.branches = git.branch_stack(state.root)
   state.current_branch = git.current_branch(state.root)
   state.default_base = git.default_base(state.root)
   -- Branch tips may have moved, so reload the first page of each expanded branch.
